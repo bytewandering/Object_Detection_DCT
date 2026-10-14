@@ -10,6 +10,7 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 
+from . import hw_jpeg
 from .jpeg import encode
 from .transforms import DareLabFaceDCTTransform, PixelAugmentation
 
@@ -27,15 +28,16 @@ class DareLabFaceDCTDataset(Dataset):
     Without ann_path, train reads annotations/train.json and val/test read
     annotations/val.json under img_path.
     img is [kY + kCb + kCr, H/8, W/8]: the first kY, kCb and kCr zigzag
-    coefficients of Y, Cb and Cr, with 4:2:0 chroma repeated 2x2 onto the luma
-    block grid. num_dct_coefficients is one k for all components or [kY, kCb, kCr].
+    coefficients of Y, Cb and Cr, with chroma repeated onto the luma block grid
+    (2x2 for 4:2:0, 1x2 for 4:2:2 hardware datasets). num_dct_coefficients is one k for all components or [kY, kCb, kCr].
     Each coefficient channel c is normalized symmetrically, clip(q / s_c, -1, 1),
     where s_c = max(|p_low|, |p_high|) of that channel's quantized values on the
     training split (normalization_stats, see compute_normalization_stats). A
     zero coefficient therefore stays 0, so zero padding still means "no signal".
     augmentation (train mode only; keys as in PixelAugmentation) augments the
     original RGB frame under rgb_path and encodes it on the fly with the stored
-    pipeline (dct_meta.json quantization tables) instead of reading the PNGs.
+    pipeline (dct_meta.json quantization tables, or hw_jpeg when the meta has
+    hw_encoder) instead of reading the PNGs.
     """
 
     def __init__(self, img_path="/home/hzhao/ZHN/datasets/DareLab_Face_DCT",
@@ -77,6 +79,9 @@ class DareLabFaceDCTDataset(Dataset):
                              if augmentation and mode == "train" else None)
         self.rgb_path = Path(rgb_path)
         self.quant_tables = self.meta["quant_tables"] if self.quantized else None
+        # Datasets from generate_hw_dct_dataset.py are re-encoded with the same hardware model.
+        self.hw_encoder = self.meta.get("hw_encoder")
+        self.chroma_factor = hw_jpeg.CHROMA_FACTOR[(self.hw_encoder or {}).get("subsampling", "420")]
 
         with self.ann_path.open(encoding="utf-8") as stream:
             data = json.load(stream)
@@ -122,8 +127,8 @@ class DareLabFaceDCTDataset(Dataset):
         luma_shape = (info["height"] // 8, info["width"] // 8)
         coefficients = {}
         for name in COMPONENTS:
-            scale = 1 if name == "Y" else 2
-            shape = (luma_shape[0] // scale, luma_shape[1] // scale)
+            factor_h, factor_w = (1, 1) if name == "Y" else self.chroma_factor
+            shape = (luma_shape[0] // factor_h, luma_shape[1] // factor_w)
             values = np.empty((self.num_dct_coefficients[name], *shape), dtype=np.float32)
             for index in range(len(values)):
                 path = frame / f"{name}_{index:02d}.png"
@@ -161,7 +166,12 @@ class DareLabFaceDCTDataset(Dataset):
             sample = self.transform(self.load_coefficients(info), boxes, ignored)
         else:
             image, pixel_matrix = self.augmentation(self.load_rgb(info))
-            coefficients = encode(image, self.num_dct_coefficients, self.quant_tables)
+            if self.hw_encoder:
+                coefficients = hw_jpeg.encode(image, self.num_dct_coefficients,
+                                              self.hw_encoder["final_rounding"],
+                                              self.hw_encoder.get("subsampling", "420"))
+            else:
+                coefficients = encode(image, self.num_dct_coefficients, self.quant_tables)
             sample = self.transform(coefficients, boxes, ignored, pixel_matrix)
         if self.scale is not None:
             sample["img"] = (sample["img"] / self.scale).clamp_(-1.0, 1.0)

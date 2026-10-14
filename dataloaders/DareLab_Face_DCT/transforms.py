@@ -99,8 +99,9 @@ class DareLabFaceDCTTransform:
         augmented = pixel_matrix is not None
         block = np.array([[1 / BLOCK, 0, 0], [0, 1 / BLOCK, 0], [0, 0, 1]], dtype=np.float64)
         matrix = block @ pixel_matrix if augmented else block
-        # Each 4:2:0 chroma block covers 2x2 luma blocks.
-        cb, cr = (component.repeat(2, axis=1).repeat(2, axis=2) for component in (cb, cr))
+        # Each chroma block covers 2x2 (4:2:0) or 1x2 (4:2:2) luma blocks.
+        factor_h, factor_w = grid_h // cb.shape[1], grid_w // cb.shape[2]
+        cb, cr = (component.repeat(factor_h, axis=1).repeat(factor_w, axis=2) for component in (cb, cr))
         feature = np.concatenate((y, cb, cr), axis=0)
 
         def transform_boxes(values):

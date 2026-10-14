@@ -12,10 +12,10 @@ from pathlib import Path
 import torch
 
 from .centroid_metrics import centroid_metrics, load_ground_truth
-from .TrainingTask_Object_Detection_DCT import TrainingTask_Object_Detection_DCT, _input_channels
+from .TrainingTask_NanoDet_DCT import TrainingTask_NanoDet_DCT, _input_channels
 
 
-class TrainingTask_FOMO_DCT(TrainingTask_Object_Detection_DCT):
+class TrainingTask_FOMO_DCT(TrainingTask_NanoDet_DCT):
 
     @staticmethod
     def _validate_model(cfg):

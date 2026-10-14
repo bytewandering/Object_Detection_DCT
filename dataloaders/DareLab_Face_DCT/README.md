@@ -90,6 +90,41 @@ compute_normalization_stats("/home/hzhao/ZHN/datasets/DareLab_Face_DCT/train_p01
 Y 122、53、70、30 … 2，Cb 36、7、9、4，Cr 23、5、7、2；训练集与验证集各约 2% 的值达到 ±1。
 修改划分后需重新生成。npz 中保存 lower、upper、max_abs、scale、percentiles、ann_path。
 
+## 硬件版数据（FPGA 逐位模型）
+
+`hw_jpeg.py` 逐位复现 `jpeg_dct_original_opt.v`（整数行/列 DCT，每级 `>>> 9` 向下取整，
+结果约为正交 DCT 的 2 倍）和 `jpeg_quant_zigzag.v`（乘 `floor(4096 / 2Q)`，含 Verilog 中
+Q75 色度表 `[18]=20, [19]=33` 与 Annex K 不同的两项）。颜色转换和 4:2:0 不在 Verilog 中，
+与 `jpeg.py` 相同。Verilog 未实现 `q_coeff` 最后的取整，由 `final_rounding` 选择：
+`half_away`（`(|p| + 2048) >> 12`，默认）或 `floor`（`p >> 12`）。
+
+```bash
+python Object_Detection_DCT/dataloaders/DareLab_Face_DCT/generate_hw_dct_dataset.py            # → DareLab_Face_DCT_HW
+python Object_Detection_DCT/dataloaders/DareLab_Face_DCT/generate_hw_dct_dataset.py --final-rounding floor \
+    --dst /home/hzhao/ZHN/datasets/DareLab_Face_DCT_HW_floor
+python Object_Detection_DCT/tools/test.py WORKSPACE \
+    --img-path /home/hzhao/ZHN/datasets/DareLab_Face_DCT_HW              # FOMO 与 NanoDet 通用
+```
+
+输出目录结构与本数据集相同，`hw_diff_stats.json` 按划分、通道、zigzag 序号统计与浮点版
+PNG 的差值。`dct_meta.json` 含 `hw_encoder` 时，训练增强也改用 `hw_jpeg` 即时编码。
+测试时 `--img-path` 只替换系数目录，`ann_path` 和 `normalization_stats` 仍用训练目录 `config.yml` 中的。
+
+验证集上 `[16, 4, 4]` 所选系数与浮点版不同的比例：`half_away` 为 Y 6.1%、Cb/Cr 5.1%，
+`floor` 为 Y 55%、Cb/Cr 54%，差值均为 ±1（几乎都是 -1）。
+
+`--subsampling 422` 按 4:2:2 生成：色度只在水平方向两点平均 `(a + b + 1) >> 1`，Cb/Cr 网格
+`[H/8, W/16]`（30×20），读取时每个色度块复制到 1×2 个亮度块上，输入仍为 `[kY+kCb+kCr, H/8, W/8]`。
+4:2:2 与 4:2:0 参考版色度形状不同，`hw_diff_stats.json` 只比较 Y。用于重新训练的数据集：
+
+```bash
+python Object_Detection_DCT/dataloaders/DareLab_Face_DCT/generate_hw_dct_dataset.py --subsampling 422 --final-rounding floor \
+    --dst /home/hzhao/ZHN/datasets/DareLab_Face_DCT_HW422
+```
+
+归一化统计需按新训练集重新计算（`compute_normalization_stats(..., img_path=HW422 目录)`），
+对应配置为 `config/DareLab_Face_DCT/FOMO_DCT_HW422.yml` 和 `NanoDet_DCT_HW422.yml`。
+
 ## 参数
 
 | 参数 | 默认值 | 说明 |

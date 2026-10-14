@@ -37,7 +37,7 @@ def _input_channels(loader_cfg):
     return 3 * counts if isinstance(counts, int) else sum(counts)
 
 
-class TrainingTask_Object_Detection_DCT(LightningModule):
+class TrainingTask_NanoDet_DCT(LightningModule):
     """cfg.model/schedule/log follow the NanoDet task layout.
 
     The batch comes from DareLabFaceDCTDataLoader: img is a DCT block grid and
