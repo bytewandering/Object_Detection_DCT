@@ -4,7 +4,9 @@ MobileNetV2 is cut at the ReLU6 after the expansion layer of Keras block
 ``block_{cut_block}`` (block_6_expand_relu by default, 1/8 resolution). A 1x1
 conv with 32 filters and ReLU, then a 1x1 conv to background + classes, gives
 per-cell logits. Each object is labelled only in the cell holding its box
-centre, and object cells are weighted by object_weight in the cross entropy.
+centre (label_mode="center", as the original), or in every cell whose centre
+lies inside its box plus the centre cell (label_mode="box"); object cells are
+weighted by object_weight in the cross entropy.
 
 block_grid_input=True is for inputs already on an 8x8 block grid (DCT
 coefficients): every stride-2 convolution before the cut runs at stride 1, so
@@ -38,8 +40,10 @@ class FOMO(nn.Module):
 
     def __init__(self, width_mult=0.35, cut_block=6, num_classes=1, head_channels=32,
                  object_weight=100.0, score_threshold=0.5, input_channels=3,
-                 block_grid_input=False):
+                 block_grid_input=False, label_mode="center"):
         super().__init__()
+        if label_mode not in ("center", "box"):
+            raise ValueError("label_mode must be 'center' or 'box'")
         if width_mult <= 0:
             raise ValueError("width_mult must be positive")
         if type(cut_block) is not int or not 1 <= cut_block <= 16:
@@ -67,6 +71,7 @@ class FOMO(nn.Module):
         self.num_classes = num_classes
         self.object_weight = float(object_weight)
         self.score_threshold = float(score_threshold)
+        self.label_mode = label_mode
         self.quant = aq.QuantStub()
         self.dequant = aq.DeQuantStub()
         self.epoch = 0
@@ -97,25 +102,35 @@ class FOMO(nn.Module):
         return self.post_process(self.train_forward(x, meta), meta)
 
     def targets(self, logits, meta):
-        """Centre-cell class labels [B, H', W'] and per-cell loss weights."""
+        """Class labels [B, H', W'] of each object's cells (see label_mode) and per-cell loss weights."""
         batch, _, grid_h, grid_w = logits.shape
         labels = torch.zeros(batch, grid_h, grid_w, dtype=torch.long)
         weights = torch.ones(batch, grid_h, grid_w)
 
         def cells(boxes):
-            boxes = np.asarray(boxes, dtype=np.float32).reshape(-1, 4)
-            cx = ((boxes[:, 0] + boxes[:, 2]) / 2 / self.stride).astype(np.int64).clip(0, grid_w - 1)
-            cy = ((boxes[:, 1] + boxes[:, 3]) / 2 / self.stride).astype(np.int64).clip(0, grid_h - 1)
-            return cy, cx
+            """(rows, cols) of each box's cells: the centre cell, and in box mode every cell centred inside."""
+            result = []
+            for x1, y1, x2, y2 in np.asarray(boxes, dtype=np.float32).reshape(-1, 4) / self.stride:
+                cx = min(max(int((x1 + x2) / 2), 0), grid_w - 1)
+                cy = min(max(int((y1 + y2) / 2), 0), grid_h - 1)
+                mask = np.zeros((grid_h, grid_w), dtype=bool)
+                mask[cy, cx] = True
+                if self.label_mode == "box":
+                    # Cell (r, c) is centred at (c + 0.5, r + 0.5).
+                    c0, c1 = max(int(np.ceil(x1 - 0.5)), 0), min(int(np.floor(x2 - 0.5)) + 1, grid_w)
+                    r0, r1 = max(int(np.ceil(y1 - 0.5)), 0), min(int(np.floor(y2 - 0.5)) + 1, grid_h)
+                    mask[r0:r1, c0:c1] = True
+                result.append(np.nonzero(mask))
+            return result
 
         for index in range(batch):
-            cy, cx = cells(meta["gt_bboxes"][index])
-            labels[index, cy, cx] = torch.as_tensor(meta["gt_labels"][index], dtype=torch.long) + 1
-            weights[index, cy, cx] = self.object_weight
-            # A crowd/ignored centre is neither object nor background.
-            cy, cx = cells(meta["gt_bboxes_ignore"][index])
-            labels[index, cy, cx] = 0
-            weights[index, cy, cx] = 0
+            for (cy, cx), label in zip(cells(meta["gt_bboxes"][index]), meta["gt_labels"][index]):
+                labels[index, cy, cx] = int(label) + 1
+                weights[index, cy, cx] = self.object_weight
+            # A crowd/ignored region is neither object nor background.
+            for cy, cx in cells(meta["gt_bboxes_ignore"][index]):
+                labels[index, cy, cx] = 0
+                weights[index, cy, cx] = 0
         return labels.to(logits.device), weights.to(logits.device)
 
     def loss(self, logits, meta):
