@@ -1,0 +1,74 @@
+task_name: TrainingTask_FOMO_DCT
+save_dir: /home/hzhao/ZHN/workspace/Object_Detection_DCT/darelab_face_fomo_hw422_a035_box_y13
+checkpoint:
+  dir: checkpoints  # 相对于 save_dir，也支持绝对路径
+  save_last: true
+  save_best: true  # 各精度阶段分别按验证集质心 F1 保存最佳模型
+dataloader:
+  train:
+    batch_size: 16
+    num_workers: 4
+    name: DareLabFaceDCTDataLoader
+    img_path: /home/hzhao/ZHN/datasets/DareLab_Face_DCT_HW422
+    ann_path: /home/hzhao/ZHN/datasets/DareLab_Face_DCT_HW422/annotations/train.json  # 划分由 JSON 决定
+    num_dct_coefficients: [13, 4, 4]  # Y/Cb/Cr 各取前几层，总和须等于 model.input_channels
+    normalization_stats: /home/hzhao/ZHN/datasets/DareLab_Face_DCT_HW422/train_p01_p99_symmetric.npz  # 每层按训练集 1%/99% 分位数对称缩放到 [-1, 1]
+    rgb_path: /home/hzhao/ZHN/datasets/DareLab_Face  # 增强时从原图编码
+    augmentation:  # 仅训练集生效；与 RGB 相同，先在像素上增强，再即时用 hw_jpeg（4:2:2、硬件 DCT、向下取整）编码
+      flip: 0.5  # 水平翻转概率
+      scale: [0.6, 1.4]  # 以图像中心随机缩放
+      translate: 0.1  # 随机平移，占宽/高的比例
+      brightness: 0.2  # 亮度偏移（像素归一化到 [0, 1] 后）
+      contrast: [0.8, 1.2]
+      saturation: [0.8, 1.2]
+  val:
+    batch_size: 16
+    num_workers: 4
+    name: DareLabFaceDCTDataLoader
+    img_path: /home/hzhao/ZHN/datasets/DareLab_Face_DCT_HW422
+    ann_path: /home/hzhao/ZHN/datasets/DareLab_Face_DCT_HW422/annotations/val.json  # 验证与测试共用
+    num_dct_coefficients: [13, 4, 4]
+    normalization_stats: /home/hzhao/ZHN/datasets/DareLab_Face_DCT_HW422/train_p01_p99_symmetric.npz
+device:
+  gpu_ids: [0]
+  precision: 32-true
+grad_clip: 1.0
+model:
+  name: FOMO
+  width_mult: 0.35  # MobileNetV2 宽度系数（宽度扫描实验）
+  cut_block: 6  # 截断在 Keras block_6_expand_relu
+  block_grid_input: true  # 输入已是 8×8 块网格，截断前的 stride-2 卷积改为 stride 1，输出每格对应一个块
+  input_channels: 21  # = kY + kCb + kCr
+  head_channels: 32
+  num_classes: 1
+  label_mode: box  # center：仅框中心所在格为人脸（原版 FOMO）；box：中心落在框内的格子全部为人脸（并始终包含中心格）
+  object_weight: 100.0  # 交叉熵中人脸格的权重
+  score_threshold: 0.5  # 后处理与指标使用的人脸概率阈值
+schedule:
+  total_epochs: 90
+  val_intervals: 1
+  optimizer:
+    name: AdamW
+    lr: 0.001
+    weight_decay: 0.0
+  lr_schedule:
+    name: CosineAnnealingLR
+    T_max: 90
+    eta_min: 1.0e-05
+quantization:
+  stage_epochs:  # 依次 FP32 → INT24 → INT16 → INT8，总和须等于 schedule.total_epochs
+    fp32: 50
+    int24: 10
+    int16: 10
+    int8: 20
+  observer_freeze_after: 5  # 每个 QAT 阶段统计 5 个 epoch 后冻结 observer，null 表示不冻结
+  bn_freeze_after: 5
+log:
+  dir: logs  # 相对于 save_dir，也支持绝对路径；文字日志写入 train.log，W&B 文件位于其 wandb 子目录
+  interval: 10
+  wandb:  # 删除整个 wandb 段则改用 CSVLogger，指标保存在 logs/metrics/version_*/metrics.csv
+    project: object-detection-dct
+    name: darelab-face-fomo-progressive-hw422-a035-box-y13
+    entity: null  # W&B 用户名或团队名；null 使用账号默认值
+    offline: false  # 无网络调试时设为 true
+    id: null  # 继续同一条在线 W&B run 时填写原 run ID
