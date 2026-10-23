@@ -39,7 +39,12 @@ class TestingTask_FOMO_DCT(TrainingTask_FOMO_DCT):
 
     def on_load_checkpoint(self, checkpoint):
         # config.yml must describe the checkpoint's model, or the weights would be misread.
-        if checkpoint["hyper_parameters"]["cfg"]["model"] != _plain(self.cfg.model):
+        # Post-processing settings do not touch the weights, so config.yml may retune them after training.
+        saved, current = dict(checkpoint["hyper_parameters"]["cfg"]["model"]), _plain(self.cfg.model)
+        for key in ("score_threshold", "postprocess", "group_threshold", "peak_radius"):
+            saved.pop(key, None)
+            current.pop(key, None)
+        if saved != current:
             raise ValueError(f"config.yml model differs from checkpoint {self.checkpoint_path}")
         super().on_load_checkpoint(checkpoint)
 
@@ -73,7 +78,7 @@ class TestingTask_FOMO_DCT(TrainingTask_FOMO_DCT):
         predictions = detections[image_id][0]
         gt = self._truth[image_id]
         truths = test_utils.ground_truth_boxes(gt, width, height)
-        tp, fp, fn = match_image(predictions, gt["boxes"], gt["ignored"])
+        tp, fp, fn = match_image(predictions, gt["boxes"], gt["ignored"], self.group_gap)
         path = None
         if len(self._samples) % self.image_every == 0:
             path = test_utils.save_image(self.output_dir, self.image_root, image_id, file_name,
@@ -116,7 +121,7 @@ class TestingTask_FOMO_DCT(TrainingTask_FOMO_DCT):
 
         # post_process already dropped cells below the model's score threshold.
         predictions = {image_id: detections[0] for image_id, detections in records.items()}
-        summary = centroid_metrics(predictions, self._truth, self.model.score_threshold)
+        summary = centroid_metrics(predictions, self._truth, self.model.score_threshold, group_gap=self.group_gap)
         summary.update(test_utils.loss_summary(self._losses))
         per_recording = {}
         for sample in samples:

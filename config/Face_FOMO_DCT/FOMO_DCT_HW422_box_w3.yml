@@ -1,0 +1,86 @@
+task_name: TrainingTask_FOMO_DCT
+save_dir: /home/hzhao/ZHN/workspace/Object_Detection_DCT/face_fomo_export_fomo_hw422_box_w3
+checkpoint:
+  dir: checkpoints  # 相对于 save_dir，也支持绝对路径
+  save_last: true
+  save_best: true  # 各精度阶段分别按验证集质心 F1 保存最佳模型
+dataloader:
+  train:
+    batch_size: 16
+    num_workers: 4
+    name: FaceFOMODCTDataLoader
+    img_path: /home/hzhao/ZHN/datasets/face-detection-fomo-export  # 原始 JPEG 与 annotations/（prepare_dataset.py 生成）
+    ann_path: /home/hzhao/ZHN/datasets/face-detection-fomo-export/annotations/train.json  # Edge Impulse training/ 文件夹
+    rgb_path: /home/hzhao/ZHN/datasets/face-detection-fomo-export  # 测试画图读取的原图目录（默认即 img_path）
+    input_size: [320, 320]  # [W, H]，保持长宽比缩放后居中，四周填 128（编码后系数为 0）
+    num_dct_coefficients: [16, 4, 4]  # Y/Cb/Cr 各取前几层，总和须等于 model.input_channels
+    normalization_stats: /home/hzhao/ZHN/datasets/face-detection-fomo-export/train_p01_p99_symmetric_320x320_hw422_floor.npz  # 须与 input_size、编码器一致
+    hw_encoder:  # 用 hw_jpeg 即时编码（4:2:2、硬件 DCT、向下取整）；删除则用浮点 JPEG（quality）
+      final_rounding: floor
+      subsampling: "422"
+    augmentation:  # 仅训练集生效；在 letterbox 后的像素上增强，再即时编码
+      flip: 0.5
+      scale: [0.6, 1.4]
+      translate: 0.1
+      brightness: 0.2
+      contrast: [0.8, 1.2]
+      saturation: [0.8, 1.2]
+  val:
+    batch_size: 16
+    num_workers: 4
+    name: FaceFOMODCTDataLoader
+    img_path: /home/hzhao/ZHN/datasets/face-detection-fomo-export
+    ann_path: /home/hzhao/ZHN/datasets/face-detection-fomo-export/annotations/val.json  # Edge Impulse testing/ 文件夹，验证与测试共用
+    input_size: [320, 320]
+    num_dct_coefficients: [16, 4, 4]
+    normalization_stats: /home/hzhao/ZHN/datasets/face-detection-fomo-export/train_p01_p99_symmetric_320x320_hw422_floor.npz
+    hw_encoder:
+      final_rounding: floor
+      subsampling: "422"
+evaluation:
+  group_gap: 0.25  # 真实框之间间隙 ≤ 0.25 倍较小框边长（可传递）的视为挤在一起，合并为一个目标评估
+device:
+  gpu_ids: [1]
+  precision: 32-true
+grad_clip: 1.0
+model:
+  name: FOMO
+  width_mult: 0.35  # MobileNetV2 宽度系数（原版默认 0.35）
+  cut_block: 6  # 截断在 Keras block_6_expand_relu
+  block_grid_input: true  # 输入已是 8×8 块网格，截断前的 stride-2 卷积改为 stride 1，输出每格对应一个块
+  input_channels: 24  # = kY + kCb + kCr
+  head_channels: 32
+  num_classes: 1
+  label_mode: box  # center：仅框中心所在格为人脸（原版 FOMO）；box：中心落在框内的格子全部为人脸（并始终包含中心格）
+  object_weight: 3.0  # 交叉熵中人脸格的权重
+  score_threshold: 0.9  # 双阈值分组的筛选阈值：块内最高概率须达到此值才报为一个目标
+  postprocess: components  # 按连通块分目标
+  group_threshold: 0.7  # 双阈值分组的连接阈值：概率 ≥ 此值的相邻格子连成一块；两个阈值都按验证集扫描选取
+schedule:
+  total_epochs: 90
+  val_intervals: 1
+  optimizer:
+    name: AdamW
+    lr: 0.001
+    weight_decay: 0.0
+  lr_schedule:
+    name: CosineAnnealingLR
+    T_max: 90
+    eta_min: 1.0e-05
+quantization:
+  stage_epochs:  # 依次 FP32 → INT24 → INT16 → INT8，总和须等于 schedule.total_epochs
+    fp32: 50
+    int24: 10
+    int16: 10
+    int8: 20
+  observer_freeze_after: 5  # 每个 QAT 阶段统计 5 个 epoch 后冻结 observer，null 表示不冻结
+  bn_freeze_after: 5
+log:
+  dir: logs  # 相对于 save_dir，也支持绝对路径；文字日志写入 train.log，W&B 文件位于其 wandb 子目录
+  interval: 10
+  wandb:  # 删除整个 wandb 段则改用 CSVLogger，指标保存在 logs/metrics/version_*/metrics.csv
+    project: object-detection-dct
+    name: face-fomo-export-fomo-hw422-box-w3
+    entity: null  # W&B 用户名或团队名；null 使用账号默认值
+    offline: false  # 无网络调试时设为 true
+    id: null  # 继续同一条在线 W&B run 时填写原 run ID

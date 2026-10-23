@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 BLOCK = 8
-AUGMENTATION_KEYS = {"flip", "scale", "translate", "brightness", "contrast", "saturation"}
+AUGMENTATION_KEYS = {"flip", "scale", "translate", "brightness", "contrast", "saturation", "grayscale"}
 
 
 class PixelAugmentation:
@@ -17,6 +17,9 @@ class PixelAugmentation:
     flip probability, scale range about the centre, translate as a fraction of
     the size, then brightness offset, contrast and saturation ranges. Uncovered
     pixels are filled with 128, which encodes to all-zero coefficients.
+    grayscale (not in Object_Detection_RGB, default 0) is the probability of
+    finally replacing R, G and B by the rounded BT.601 luma; such a frame keeps
+    its Y plane and encodes to all-zero Cb/Cr coefficients.
     Returns the uint8 image and the original-to-augmented pixel matrix.
     """
 
@@ -31,8 +34,11 @@ class PixelAugmentation:
         self.brightness = float(augmentation.get("brightness", 0.0))
         self.contrast = tuple(augmentation.get("contrast", (1.0, 1.0)))
         self.saturation = tuple(augmentation.get("saturation", (1.0, 1.0)))
+        self.grayscale = float(augmentation.get("grayscale", 0.0))
         if not 0 <= self.flip <= 1 or not 0 <= self.translate < 1 or self.brightness < 0:
             raise ValueError("flip must be in [0, 1], translate in [0, 1) and brightness >= 0")
+        if not 0 <= self.grayscale <= 1:
+            raise ValueError("grayscale must be in [0, 1]")
         for name in ("scale", "contrast", "saturation"):
             low, high = getattr(self, name)
             if not 0 < low <= high:
@@ -80,6 +86,10 @@ class PixelAugmentation:
                                    borderMode=cv2.BORDER_CONSTANT, borderValue=(128, 128, 128))
         if self.photometric:
             image = self._photometric(image)
+        if self.grayscale > 0 and random.random() < self.grayscale:
+            # Equal R, G and B give Cb = Cr = 128, i.e. zero chroma coefficients after the level shift.
+            luma = np.round(image.astype(np.float64) @ np.array([0.299, 0.587, 0.114]))
+            image = np.repeat(np.clip(luma, 0, 255).astype(np.uint8)[..., None], 3, axis=2)
         return image, matrix
 
 

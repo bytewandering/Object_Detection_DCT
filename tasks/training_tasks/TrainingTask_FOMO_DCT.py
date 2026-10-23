@@ -20,8 +20,8 @@ class TrainingTask_FOMO_DCT(TrainingTask_NanoDet_DCT):
     @staticmethod
     def _validate_model(cfg):
         model = cfg["model"]
-        if model.get("name") != "FOMO":
-            raise ValueError("TrainingTask_FOMO_DCT requires model.name: FOMO")
+        if model.get("name") not in ("FOMO", "FOMO_JPEGFusion"):
+            raise ValueError("TrainingTask_FOMO_DCT requires model.name: FOMO or FOMO_JPEGFusion")
         if model.get("num_classes", 1) != 1:
             raise ValueError("DareLab face detection has one foreground class")
         if not model.get("block_grid_input", False):
@@ -31,6 +31,12 @@ class TrainingTask_FOMO_DCT(TrainingTask_NanoDet_DCT):
             if model.get("input_channels", 3) != expected:
                 raise ValueError(f"model.input_channels={model.get('input_channels', 3)} disagrees with "
                                  f"dataloader.{split}.num_dct_coefficients ({expected} channels)")
+            if model.get("name") == "FOMO_JPEGFusion":
+                counts = cfg["dataloader"][split].get("num_dct_coefficients", 64)
+                luma = counts if isinstance(counts, int) else counts[0]
+                if model.get("luma_inputs") != luma:
+                    raise ValueError(f"model.luma_inputs must equal the Y count of "
+                                     f"dataloader.{split}.num_dct_coefficients ({luma})")
 
     def compute_losses(self, preds, batch):
         return self.model.loss(preds, batch)
@@ -44,6 +50,11 @@ class TrainingTask_FOMO_DCT(TrainingTask_NanoDet_DCT):
         self._validation_records.update(self.model.post_process(preds, batch))
         return loss
 
+    @property
+    def group_gap(self):
+        """evaluation.group_gap of the config: crowded ground-truth boxes count as one target."""
+        return self.cfg.get("evaluation", {}).get("group_gap")
+
     def _metrics(self, records, phase):
         loader_cfg = self.cfg.dataloader.val
         annotation_path = Path(loader_cfg.get("ann_path") or
@@ -51,7 +62,7 @@ class TrainingTask_FOMO_DCT(TrainingTask_NanoDet_DCT):
         # post_process already dropped cells below the model's score threshold.
         predictions = {image_id: detections[0] for image_id, detections in records.items()}
         return centroid_metrics(predictions, load_ground_truth(annotation_path),
-                                self.model.score_threshold, prefix=f"{phase}/")
+                                self.model.score_threshold, prefix=f"{phase}/", group_gap=self.group_gap)
 
     def on_validation_epoch_end(self):
         if self.trainer.sanity_checking:

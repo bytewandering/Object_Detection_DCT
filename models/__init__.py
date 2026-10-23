@@ -1,6 +1,6 @@
 import copy
 from .nanodet.model.arch import build_model as build_nanodet
-from .fomo import FOMO
+from .fomo import FOMO, FOMOJPEGFusion
 
 def build_detector(config):
     detector_config = copy.deepcopy(config)
@@ -10,6 +10,8 @@ def build_detector(config):
         detector = build_nanodet(detector_config)
     elif name == "FOMO":
         detector = FOMO(**detector_config)
+    elif name == "FOMO_JPEGFusion":
+        detector = FOMOJPEGFusion(**detector_config)
     else:
         raise NotImplementedError
 

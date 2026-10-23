@@ -44,6 +44,7 @@ sampler、batch_sampler、worker_init_fn、generator 等对象应通过 Python �
 | `CoCo_Person/` | `CoCoPersonDataLoader` | `FullCoderDataset` | [单前景类别 COCO 数据](CoCo_Person/README.md) |
 | `DareLab_Face/` | `DareLabFaceDataLoader` | `DareLabFaceDataset` | [人脸数据及自动划分规则](DareLab_Face/README.md) |
 | `DareLab_Face_DCT/` | `DareLabFaceDCTDataLoader` | `DareLabFaceDCTDataset` | [人脸数据的 8×8 块 DCT 系数输入](DareLab_Face_DCT/README.md) |
+| `Face_FOMO_DCT/` | `FaceFOMODCTDataLoader` | `FaceFOMODCTDataset` | [Edge Impulse 人脸数据，letterbox 后即时 DCT 编码](Face_FOMO_DCT/README.md) |
 
 每个子目录包含 `__init__.py`、`dataloader.py`、`dataset.py`、`transforms.py`、
 `collate.py` 和 `README.md`。Dataset、transform 和 collate 由各自 DataLoader 固定选择，

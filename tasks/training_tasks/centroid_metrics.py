@@ -4,6 +4,10 @@ A prediction is a true positive when its centroid lies inside a ground-truth
 box that no higher-scoring prediction in the same image has matched. Boxes
 marked iscrowd/ignore are not counted as misses, and centroids landing inside
 them are neither true nor false positives.
+
+With group_gap (a fraction, e.g. 0.25), boxes that touch or lie within
+group_gap x the smaller box side of each other (transitively) form one target,
+matched by the box enclosing them: crowded objects count once, found or missed.
 """
 
 import json
@@ -26,8 +30,34 @@ def _inside(point, box):
     return box[0] <= point[0] <= box[2] and box[1] <= point[1] <= box[3]
 
 
-def match_image(predictions, boxes, ignored):
-    """Greedy centroid-in-box matching; returns (tp, fp, fn)."""
+def group_boxes(boxes, gap):
+    """Merge boxes closer than gap x the smaller side (transitively); returns the enclosing boxes."""
+    parent = list(range(len(boxes)))
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i, a in enumerate(boxes):
+        for j in range(i + 1, len(boxes)):
+            b = boxes[j]
+            margin = gap * min(a[2] - a[0], a[3] - a[1], b[2] - b[0], b[3] - b[1])
+            if (a[0] <= b[2] + margin and b[0] <= a[2] + margin
+                    and a[1] <= b[3] + margin and b[1] <= a[3] + margin):
+                parent[root(i)] = root(j)
+    groups = {}
+    for i, box in enumerate(boxes):
+        groups.setdefault(root(i), []).append(box)
+    return [[min(b[0] for b in g), min(b[1] for b in g), max(b[2] for b in g), max(b[3] for b in g)]
+            for g in groups.values()]
+
+
+def match_image(predictions, boxes, ignored, group_gap=None):
+    """Greedy centroid-in-box matching; returns (tp, fp, fn). See the module doc for group_gap."""
+    if group_gap is not None:
+        boxes = group_boxes(boxes, group_gap)
     matched = [False] * len(boxes)
     tp = fp = 0
     for prediction in sorted(predictions, key=lambda item: -item["score"]):
@@ -41,17 +71,18 @@ def match_image(predictions, boxes, ignored):
     return tp, fp, matched.count(False)
 
 
-def centroid_metrics(records, truth, threshold, prefix=""):
+def centroid_metrics(records, truth, threshold, prefix="", group_gap=None):
     """Object- and image-level precision/recall/F1 for predictions scoring >= threshold.
 
     records maps image_id to a list of {"centroid": [x, y], "score": s}.
+    group_gap merges crowded ground-truth boxes into one target (see the module doc).
     """
     tp = fp = fn = 0
     image = {"tp": 0, "fp": 0, "fn": 0, "tn": 0}
     for image_id, predictions in records.items():
         gt = truth[int(image_id)]
         kept = [p for p in predictions if p["score"] >= threshold]
-        counts = match_image(kept, gt["boxes"], gt["ignored"])
+        counts = match_image(kept, gt["boxes"], gt["ignored"], group_gap)
         tp, fp, fn = tp + counts[0], fp + counts[1], fn + counts[2]
         has_face, detected = bool(gt["boxes"]), bool(kept)
         image["tp" if has_face and detected else "fp" if detected else "fn" if has_face else "tn"] += 1
