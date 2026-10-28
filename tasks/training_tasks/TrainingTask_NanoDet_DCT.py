@@ -173,12 +173,15 @@ class TrainingTask_NanoDet_DCT(LightningModule):
             msg += " ".join(f"{key}:{value.detach().item():.4f}" for key, value in states.items())
             self.info(msg)
 
+    def trainable_parameters(self):
+        return self.model.parameters()
+
     def configure_optimizers(self):
         optimizer_cfg = dict(self.cfg.schedule.optimizer)
         name = optimizer_cfg.pop("name")
         if name not in ("Adam", "AdamW", "SGD"):
             raise ValueError("Supported optimizers: Adam, AdamW, SGD")
-        optimizer = getattr(torch.optim, name)(self.model.parameters(), **optimizer_cfg)
+        optimizer = getattr(torch.optim, name)(self.trainable_parameters(), **optimizer_cfg)
         scheduler_cfg = dict(self.cfg.schedule.get("lr_schedule", {}))
         if not scheduler_cfg:
             return optimizer

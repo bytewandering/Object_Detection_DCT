@@ -20,8 +20,8 @@ class TrainingTask_FOMO_DCT(TrainingTask_NanoDet_DCT):
     @staticmethod
     def _validate_model(cfg):
         model = cfg["model"]
-        if model.get("name") not in ("FOMO", "FOMO_JPEGFusion"):
-            raise ValueError("TrainingTask_FOMO_DCT requires model.name: FOMO or FOMO_JPEGFusion")
+        if model.get("name") not in ("FOMO", "FOMO_JPEGFusion", "FOMO_JPEGFusionLite"):
+            raise ValueError("TrainingTask_FOMO_DCT requires model.name: FOMO, FOMO_JPEGFusion or FOMO_JPEGFusionLite")
         if model.get("num_classes", 1) != 1:
             raise ValueError("DareLab face detection has one foreground class")
         if not model.get("block_grid_input", False):
@@ -31,7 +31,7 @@ class TrainingTask_FOMO_DCT(TrainingTask_NanoDet_DCT):
             if model.get("input_channels", 3) != expected:
                 raise ValueError(f"model.input_channels={model.get('input_channels', 3)} disagrees with "
                                  f"dataloader.{split}.num_dct_coefficients ({expected} channels)")
-            if model.get("name") == "FOMO_JPEGFusion":
+            if model.get("name") in ("FOMO_JPEGFusion", "FOMO_JPEGFusionLite"):
                 counts = cfg["dataloader"][split].get("num_dct_coefficients", 64)
                 luma = counts if isinstance(counts, int) else counts[0]
                 if model.get("luma_inputs") != luma:

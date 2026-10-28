@@ -138,7 +138,9 @@ class TestingTask_FOMO_DCT(TrainingTask_FOMO_DCT):
         report = test_utils.report_header(self, samples, self._truth, self.annotation_path, self.image_every)
         report.update({
             "model": {"width_mult": model_cfg.get("width_mult", 0.35), "cut_block": model_cfg.get("cut_block", 6),
-                      "output_stride": self.model.stride, "score_threshold": self.model.score_threshold},
+                      "output_stride": self.model.stride, "score_threshold": self.model.score_threshold,
+                      "postprocess": self.model.postprocess, "group_threshold": self.model.group_threshold,
+                      "evaluation_group_gap": self.group_gap},
             "coordinate_system": "original image pixels; centroids [x, y], boxes xyxy enclose object cells",
             "metric_notes": {
                 "objects": "8-connected cells with face probability >= score_threshold form one object; centroid "

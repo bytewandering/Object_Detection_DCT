@@ -86,7 +86,7 @@ def main():
         workspace = workspace.expanduser().resolve()
         cfg = load_config(workspace / "config.yml")
         cfg.save_dir = str(workspace)
-        if cfg.model.get("name") not in ("FOMO", "FOMO_JPEGFusion"):
+        if cfg.model.get("name") not in ("FOMO", "FOMO_JPEGFusion", "FOMO_JPEGFusionLite"):
             raise ValueError(f"{workspace} is not a FOMO run")
         loader_cfg = cfg.dataloader.val
         for key in ("img_path", "ann_path", "normalization_stats"):
